@@ -1,0 +1,85 @@
+| lvdsl/                                           > Módulo del Lovdog Swapland                                             ||
+|---- structure.liotree                            > Estructura independiente del módulo                                    ||
+|---- ../ > Directorio del Lovdog_Swampland completo ||
+|=-
+|----- __this__dir__
+|----- LovdogSwamplandMain.py
+|----- LovdogSwamplandMain2.py
+|----- LovdogSwamplandMain3.py
+|----- LovdogSwamplandStats.py
+|----- RunPSO_01.sh
+|----- RunIWO_01.sh
+|----- RunGA_01.sh
+|
+|----- RunGA-RS_01.sh    > :3 ||
+|----- RunPSO-RS_01.sh   > :  ||
+|----- RunIWO-RS_01.sh   > :  ||
+|----- RunUMDA-RS_01.sh  > :c ||
+|----- RunPBIL-RS_01.sh  > :3 ||
+|----- RunACO-RS_01.sh   > :  ||
+|----- RunVCS-RS_01.sh   > :3 ||
+|----- RunASO-RS_01.sh   > :c ||
+|
+|----- BASH_SCRIPTS/
+|=-
+|--------- run_da_pso_grid
+|--------- run_da_iwo_grid
+|--------- run_da_ga_grid
+|
+|--------- run_da_ga_random_search
+|--------- run_da_iwo_random_search
+|--------- run_da_pso_random_search
+|--------- run_da_umda_random_search
+|--------- run_da_pbil_random_search
+|--------- run_da_aco_random_search
+|--------- run_da_aso_random_search
+|--------- run_da_vcs_random_search
+|==
+|==
+|---- ../../ > Directorio de la TESIS ||
+|=-
+|----- structure.liotree                           > Estructura de la tesis completa                                        ||
+|----- Notas.norg
+|==
+|-- __this__dir__ > Inicio de archivos del módulo ||
+|---- __init__.py
+|---- xp.py                                        > Implementa lo necesario para procesamiento numérico, detecta tarjeta
+|                                                  gráfica para decidir sobre cupy o numpy                                  ||
+|---- utils.py                                     > Funciones auxiliares para el desarrollo del módulo                     ||
+|---- globals.py                                   > Global variables and values                                            ||
+|---- k_theory/                                    > La teoría en revisión actual                                           ||
+|=-
+|------- __init__.py
+|------- vars.py                                   > Variables de la función potencial, definición simbólica de la función
+|                                                  potencial, Hess y autovalores. Además de algunas funciones auxiliares
+|                                                  para fijar coeficientes/módulos y precisión decimal de operación para
+|                                                  sympy.                                                                   ||
+|------- potentials.py                             > Definición de las funciones de evaluación, tanto de la versión lifting
+|                                                  como de la original. (Sujeto a cambio de nombre).                        ||
+|------- plots.py                                  > Graficación de las funciones, las principales serán inspiradas en el
+|                                                  experimento original. Algunos extras en caso de ser necesario.           ||
+|==
+|---- bioinspired/
+|=-
+|------- __init__.py
+|------- defs.py
+|------- EDAs.py
+|==
+|---- data/
+|=-
+|------- __init__.py
+-------- from_csv.py
+|------- stats/
+|=-
+|-------- __init__.py
+|-------- plot_stats.py
+|-------- dir_handle.py
+|-------- get_stats.py
+|==
+|---- tests/
+|=-
+|-------- __init__.py
+|-------- filter_test.py
+|==
+|==
+
