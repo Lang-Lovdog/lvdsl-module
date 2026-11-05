@@ -1,3 +1,4 @@
+import os
 import mealpy      as mp       # type: ignore
 import pandas      as pd       # type: ignore
 import lvdsl.utils as utils    # type: ignore
@@ -15,6 +16,7 @@ from lvdsl.data.from_csv       import read_mathematica_format
 from lvdsl.data.from_csv       import read_native_format
 from lvdsl.data.from_csv       import save_comparative_csv
 from lvdsl.data.from_csv       import variables                                    as vnms
+from joblib                    import Parallel, delayed
 
 ### Datetime as DDMMYYYY for directory name
 from datetime import datetime
@@ -424,7 +426,7 @@ def run_model(
     iterations  : int  =100      ,
     destination : str  =""       ,
     parallel    : bool =False    , #Not Yet Implemented
-    batch_size  : int  =0          #Not Yet Implemented
+    pbatch_size : int  =0          #Not Yet Implemented
 ):
     ni_models_object = natureinspired_models()
     for param, value in params.items():
@@ -442,34 +444,80 @@ def run_model(
             print(f"Instance {status['record']}, Iteration {status['iteration']}")
             print(f'Found solutions: {status["found_solutions"]}')
             #return
-            perform_search_fixed_s_tau(
-                df            ,
-                model_instance,
-                model_name    ,
-                out_dir       ,
-                ["s", "tau"]  ,
-                output        ,
-                start_row     = status['record']   ,
-                end_row       = len(df)            ,
-                start_iter    = status['iteration'],
-                end_iter      = iterations         ,
-                found_solutions = status['found_solutions']
-            )
+            if parallel:
+                if pbatch_size < 1:
+                    print(f"Error: pbatch_size:{pbatch_size} no especificado o erróneo.")
+                    return
+                pbatch=[]
+                _start_row=status['record']
+                _end_row  =min(_start_row+pbatch_size,len(df)),
+                ## La primera ejecución recibe la información del estado previo
+                pbatch.append({
+                    "start_row":  _start_row,
+                    "end_row":    _end_row,
+                    "start_iter": status["iteration"],
+                    "end_iter":   iterations
+                })
+                _start_row=_end_row
+                ## Las siguientes ejecuciones continúa con normalidad
+                for a in range(_start_row, len(df), pbatch_size):
+                    _end_row  =min(_start_row+pbatch_size,len(df))
+                    pbatch.append({
+                        "start_row":  _start_row,
+                        "end_row":    _end_row,
+                        "start_iter": 0,
+                        "end_iter":   iterations
+                    })
+                ## Ejecuciones
+                import math
+                _njobs=math.ceil(os.cpu_count()/2)
+                _pout=Parallel(njobs=_njobs,verbose=1)(
+                    delayed(perform_search_fixed_s_tau)(
+                        df            ,
+                        model_instance,
+                        model_name    ,
+                        out_dir       ,
+                        ["s", "tau"]  ,
+                        output        ,
+                        start_row     = _batch["start_row"],
+                        end_row       = _batch["end_row"],
+                        start_iter    = _batch["start_iter"],
+                        end_iter      = _batch["end_iter"],
+                        found_solutions = status['found_solutions']
+                    )for _batch in pbatch
+                )
+            else:
+                perform_search_fixed_s_tau(
+                    df            ,
+                    model_instance,
+                    model_name    ,
+                    out_dir       ,
+                    ["s", "tau"]  ,
+                    output        ,
+                    start_row     = status['record']   ,
+                    end_row       = len(df)            ,
+                    start_iter    = status['iteration'],
+                    end_iter      = iterations         ,
+                    found_solutions = status['found_solutions']
+                )
             return
 
         print("Performing search", flush=True)
-        perform_search_fixed_s_tau(
-            df               ,
-            model_instance   ,
-            model_name       ,
-            out_dir          ,
-            ["s", "tau"]     ,
-            output           ,
-            start_row     = 0,
-            end_row       = 0,
-            start_iter    = 0,
-            end_iter      = iterations
-        )
+        if parallel:
+            pass
+        else:
+            perform_search_fixed_s_tau(
+                df               ,
+                model_instance   ,
+                model_name       ,
+                out_dir          ,
+                ["s", "tau"]     ,
+                output           ,
+                start_row     = 0,
+                end_row       = 0,
+                start_iter    = 0,
+                end_iter      = iterations
+            )
 
     #### If full search
 
