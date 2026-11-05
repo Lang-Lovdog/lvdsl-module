@@ -283,18 +283,24 @@ def handle_output(model_instance, model_name, out_dir, destination):
 
 def last_instance_status(out_dir, model_name):
     ls=utils.get_file_list(out_dir)
+    print(f'Exploring in {ls} for {model_name}')
     ## Outdir ya contiene el nombre del modelo: VacuaFound_*/Model/
     path=ls["Path"]
     ls = utils.filter_by_extension(ls, ".csv")
     ls = utils.sort_serialized_files(ls)
+    ## Se cambiará debido al nuevo manejo de nombres y direcciones.
+    model_name=os.path.basename(path)
     csv_file = os.path.join(path,ls[model_name][-1])
     df = handle_csv_input(csv_file, "Native", True)
     print(df.columns)
+    print("Se retira la primera columna (en caso de que no se haya mostrado una columna de índices, se debe evitar este proceso)")
+    df=df.iloc[:,1:]
+    df_dict = df.to_dict('records')
     status = {
         "path": os.path.join(path, ls[model_name][-1]),
         "record" : len(ls[model_name])-1,
         "iteration" : len(df)-1,
-        "found_solutions" : [ df.to_dict('records') ]
+        "found_solutions" : [df_dict] if type(df_dict) is dict else df_dict
     }
     return status
 
@@ -395,6 +401,8 @@ def save_solutions(
 ):
     found_solutions_tmp = pd.DataFrame(found_solutions)
     out_filename= f"{out_dir}/{model_name}-{ridx:04d}.csv"
+    print(f'Saving to {out_filename}', flush=True)
+    print(found_solutions_tmp.head(), found_solutions_tmp.tail(), flush=True)
     save_comparative_csv(
         found_solutions_tmp   ,
         df                    ,
@@ -414,7 +422,9 @@ def run_model(
     output      : bool =False    ,
     recover     : bool =False    ,
     iterations  : int  =100      ,
-    destination : str  =""
+    destination : str  =""       ,
+    parallel    : bool =False    , #Not Yet Implemented
+    batch_size  : int  =0          #Not Yet Implemented
 ):
     ni_models_object = natureinspired_models()
     for param, value in params.items():
@@ -430,6 +440,7 @@ def run_model(
             status = last_instance_status(out_dir, model_name)
             print(f"Recovering from {status['path']}")
             print(f"Instance {status['record']}, Iteration {status['iteration']}")
+            print(f'Found solutions: {status["found_solutions"]}')
             #return
             perform_search_fixed_s_tau(
                 df            ,
