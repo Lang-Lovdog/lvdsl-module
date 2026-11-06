@@ -1,4 +1,6 @@
 import os
+import math
+import multiprocessing
 import mealpy      as mp       # type: ignore
 import pandas      as pd       # type: ignore
 import lvdsl.utils as utils    # type: ignore
@@ -16,7 +18,6 @@ from lvdsl.data.from_csv       import read_mathematica_format
 from lvdsl.data.from_csv       import read_native_format
 from lvdsl.data.from_csv       import save_comparative_csv
 from lvdsl.data.from_csv       import variables                                    as vnms
-from joblib                    import Parallel, delayed
 
 ### Datetime as DDMMYYYY for directory name
 from datetime import datetime
@@ -283,7 +284,8 @@ def handle_output(model_instance, model_name, out_dir, destination):
     write_model_description(model_instance, out_dir)
     return out_dir
 
-def last_instance_status(out_dir, model_name):
+def last_instance_status(out_dir, model_name,itercount=0):
+    status={}
     ls=utils.get_file_list(out_dir)
     print(f'Exploring in {ls} for {model_name}')
     ## Outdir ya contiene el nombre del modelo: VacuaFound_*/Model/
@@ -292,33 +294,142 @@ def last_instance_status(out_dir, model_name):
     ls = utils.sort_serialized_files(ls)
     ## Se cambiará debido al nuevo manejo de nombres y direcciones.
     model_name=os.path.basename(path)
-    csv_file = os.path.join(path,ls[model_name][-1])
-    df = handle_csv_input(csv_file, "Native", True)
-    print(df.columns)
-    print("Se retira la primera columna (en caso de que no se haya mostrado una columna de índices, se debe evitar este proceso)")
-    df=df.iloc[:,1:]
-    df_dict = df.to_dict('records')
-    status = {
-        "path": os.path.join(path, ls[model_name][-1]),
-        "record" : len(ls[model_name])-1,
-        "iteration" : len(df)-1,
-        "found_solutions" : [df_dict] if type(df_dict) is dict else df_dict
-    }
+    lastid=len(ls[model_name])-1
+    ### Bucle para construcción de status suponiendo previa paralelización
+    while lastid > -1:
+        csv_file = os.path.join(path,ls[model_name][lastid])
+        df = handle_csv_input(csv_file, "Native", True)
+        if len(df) > itercount:
+            status[lastid]= {'status': 2}
+            continue
+        print(df.columns)
+        ### RETIRAR COLUMNA EXTRA ::
+        print("Se retira la primera columna (en caso de que no se haya mostrado una columna de índices, se debe evitar este proceso)")
+        df=df.iloc[:,1:]
+        ### RETIRAR COLUMNA EXTRA :;
+        df_dict = df.to_dict('records')
+        status[lastid]={
+            "path"            : os.path.join(path, ls[model_name][lastid]),
+            "record"          : lastid,
+            "iteration"       : len(df)-1,
+            "found_solutions" : [df_dict] if type(df_dict) is dict else df_dict,
+            "status"          : 1
+        }
+        lastid-=1
     return status
 
-
 def perform_search_fixed_s_tau(
-        df                  ,
-        model_instance      ,
-        model_name          ,
-        out_dir             ,
-        fixed               ,
-        output              ,
-        start_row       = 0 ,
-        end_row         = 0 ,
-        start_iter      = 0 ,
-        end_iter        = 0 ,
+        df                   ,
+        model_instance       ,
+        model_name           ,
+        out_dir              ,
+        fixed                ,
+        output               ,
+        start_row        = 0 ,  ## Se reemplaza por status['record']. Ahora su sentido es global.
+        end_row          = 0 ,
+#        start_iter       = 0 , ## Se reemplaza por status['iteration']
+        end_iter         = 0 ,
+#        found_solutionsl = []  ## Se reemplaza por status['found_solutions']
+        status           = {},
+):
+    if end_row < 1:
+        end_row = len(df)
+    elif end_row > len(df) or end_row < start_row:
+        print("Error: end_row must be greater than start_row", flush=True)
+        return
+
+    #if end_iter < start_iter:
+    #    print("Error: end_iter must be greater than start_iter", flush=True)
+    #    return
+
+    fixed = [ "s", "tau" ]
+
+    print(f"Starting from row {start_row} until {end_row}", flush=True)
+
+    for ridx,row in df[start_row:end_row].iterrows():
+        ## Preparación desde status ##
+        if ridx not in status:                  ## Pues no existe el registro, se tiene que crear.
+            found_solutions=[]
+            start_iter     =0
+        elif   status[ridx].get('status') == 2: ## Ya terminó en estas condiciones, se salta
+            print(f"Registro {ridx} completo.")
+            continue
+        elif status[ridx].get('status') == 1:   ## Extrae datos del estado.
+            found_solutions=status[ridx].get('found_solutions')
+            start_iter     =status[ridx].get('iteration')
+        else:
+            continue
+        ##############################
+        set_fixed_value({
+            "s"   : row[vnms["s"  ]],
+            "tau" : row[vnms["tau"]],
+        })
+        s, tau = row[vnms["s"  ]], row[vnms["tau"]]
+        problem_to_optimize = natureinspired_problems_k_theory.vacua_parameters___lift_fv
+
+        for fidx in range(start_iter, end_iter):
+            print(f"Registro {ridx} Iteración {fidx}")
+            #### Creación de un genético simple para minimización de la función ff
+            result = model_instance.solve(problem_to_optimize)
+            if hasattr(model_instance, 'g_best'):
+                best_solution = model_instance.g_best.solution
+                best_fitness  = model_instance.g_best.target.fitness
+            else:
+                best_solution, best_fitness = result
+            #### Creación de un genético simple para minimización de la función ff
+            #### Imprimir solución
+            print(f"Solución: {best_solution}, Fitness: {best_fitness}, Registro: {ridx}, Iteración {fidx}")
+            AH3, AF3, AF5, A3N3, AD5 = best_solution
+            avalores  = V_liftingHess_eig_lambda(AH3, AF3, AF5, A3N3, AD5, tau, s)
+            potencial = V_lifting_lambda        (AH3, AF3, AF5, A3N3, AD5, tau, s)
+            found_solutions.append({
+                "V"         : potencial       ,
+                "fitness"   : best_fitness    ,
+                "AH3"       : best_solution[0],
+                "AF3"       : best_solution[1],
+                "AF5"       : best_solution[2],
+                "A3N3"      : best_solution[3],
+                "AD5"       : best_solution[4],
+                "s"         : s               ,
+                "tau"       : tau             ,
+                "lambda1"   : avalores[0]     ,
+                "lambda2"   : avalores[1]     ,
+                "taquiónico": "1" if min(avalores) < 0 else "0"
+            })
+            if output and fidx % 10 == 0:
+                save_solutions(
+                    found_solutions ,
+                    out_dir         ,
+                    model_name      ,
+                    df              ,
+                    ridx            ,
+                    fixed
+                )
+        ### Save solutions for the current search row
+        save_solutions(
+            found_solutions ,
+            out_dir         ,
+            model_name      ,
+            df              ,
+            ridx            ,
+            fixed
+        )
+
+        ### Restart found_solutions for the next search row
         found_solutions = []
+
+def _perform_search_fixed_s_tau(
+        df                   ,
+        model_instance       ,
+        model_name           ,
+        out_dir              ,
+        fixed                ,
+        output               ,
+        start_row        = 0 ,
+        end_row          = 0 ,
+        start_iter       = 0 ,
+        end_iter         = 0 ,
+        found_solutions  = []
 ):
     if end_row < 1:
         end_row = len(df)
@@ -353,7 +464,7 @@ def perform_search_fixed_s_tau(
                 best_solution, best_fitness = result
             #### Creación de un genético simple para minimización de la función ff
             #### Imprimir solución
-            print(f"Solución: {best_solution}, Fitness: {best_fitness}")
+            print(f"Solución: {best_solution}, Fitness: {best_fitness}, Registro: {ridx}, Iteración {fidx}")
             AH3, AF3, AF5, A3N3, AD5 = best_solution
             avalores  = V_liftingHess_eig_lambda(AH3, AF3, AF5, A3N3, AD5, tau, s)
             potencial = V_lifting_lambda        (AH3, AF3, AF5, A3N3, AD5, tau, s)
@@ -403,8 +514,8 @@ def save_solutions(
 ):
     found_solutions_tmp = pd.DataFrame(found_solutions)
     out_filename= f"{out_dir}/{model_name}-{ridx:04d}.csv"
-    print(f'Saving to {out_filename}', flush=True)
-    print(found_solutions_tmp.head(), found_solutions_tmp.tail(), flush=True)
+    #print(f'Saving to {out_filename}', flush=True)
+    #print(found_solutions_tmp.head(), found_solutions_tmp.tail(), flush=True)
     save_comparative_csv(
         found_solutions_tmp   ,
         df                    ,
@@ -413,6 +524,21 @@ def save_solutions(
         fixed_elements = fixed
     )
 
+def _worker(_params):
+    df, model_instance, model_name, out_dir, output, _batch = _params
+    perform_search_fixed_s_tau(
+            df            ,
+            model_instance,
+            model_name    ,
+            out_dir       ,
+            ["s", "tau"]  ,
+            output        ,
+            start_row       = _batch["start_row"],
+            end_row         = _batch["end_row"],
+            start_iter      = _batch["start_iter"],
+            end_iter        = _batch["end_iter"],
+            found_solutions = _batch['found_solutions']
+        )
 
 
 def run_model(
@@ -448,57 +574,34 @@ def run_model(
                 if pbatch_size < 1:
                     print(f"Error: pbatch_size:{pbatch_size} no especificado o erróneo.")
                     return
-                pbatch=[]
-                _start_row=status['record']
-                _end_row  =min(_start_row+pbatch_size,len(df)),
-                ## La primera ejecución recibe la información del estado previo
-                pbatch.append({
-                    "start_row":  _start_row,
-                    "end_row":    _end_row,
-                    "start_iter": status["iteration"],
-                    "end_iter":   iterations
-                })
-                _start_row=_end_row
-                ## Las siguientes ejecuciones continúa con normalidad
-                for a in range(_start_row, len(df), pbatch_size):
-                    _end_row  =min(_start_row+pbatch_size,len(df))
-                    pbatch.append({
-                        "start_row":  _start_row,
-                        "end_row":    _end_row,
-                        "start_iter": 0,
-                        "end_iter":   iterations
-                    })
-                ## Ejecuciones
-                import math
+                pbatch=[ a for a,v in status.items() if v.get('status') == 1 ]
+                pbatch_s=len(pbatch)
+                if pbatch_s == 0: return
                 _njobs=math.ceil(os.cpu_count()/2)
-                _pout=Parallel(njobs=_njobs,verbose=1)(
-                    delayed(perform_search_fixed_s_tau)(
-                        df            ,
-                        model_instance,
-                        model_name    ,
-                        out_dir       ,
-                        ["s", "tau"]  ,
-                        output        ,
-                        start_row     = _batch["start_row"],
-                        end_row       = _batch["end_row"],
-                        start_iter    = _batch["start_iter"],
-                        end_iter      = _batch["end_iter"],
-                        found_solutions = status['found_solutions']
-                    )for _batch in pbatch
-                )
+                tasks=[]
+                for i in range(0, len(pbatch), pbatch_size):
+                    _start_row=pbatch[i]
+                    endid=min(i+pbatch_size,pbatch_s-1)
+                    _end_row  =pbatch[endid] if endid < pbatch_s-1 else pbatch[endid]+1
+                    tasks.append(
+                        (df,model_instance,model_name, out_dir, output, _start_row, _end_row, status)
+                    )
+                with multiprocessing. Pool(processes=_njobs) as pool:
+                    _pout=pool.map(_worker, tasks)
             else:
-                perform_search_fixed_s_tau(
+                max_key=max(status.keys()) if status else 0
+                _perform_search_fixed_s_tau(
                     df            ,
                     model_instance,
                     model_name    ,
                     out_dir       ,
                     ["s", "tau"]  ,
                     output        ,
-                    start_row     = status['record']   ,
+                    start_row     = status[max_key]['record']   ,
                     end_row       = len(df)            ,
-                    start_iter    = status['iteration'],
+                    start_iter    = status[max_key]['iteration'],
                     end_iter      = iterations         ,
-                    found_solutions = status['found_solutions']
+                    found_solutions = status[max_key]['found_solutions']
                 )
             return
 
@@ -506,7 +609,7 @@ def run_model(
         if parallel:
             pass
         else:
-            perform_search_fixed_s_tau(
+            _perform_search_fixed_s_tau(
                 df               ,
                 model_instance   ,
                 model_name       ,
