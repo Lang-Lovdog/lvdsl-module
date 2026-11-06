@@ -296,18 +296,22 @@ def last_instance_status(out_dir, model_name,itercount=0):
     model_name=os.path.basename(path)
     lastid=len(ls[model_name])-1
     ### Bucle para construcción de status suponiendo previa paralelización
+    itercount-=1
     while lastid > -1:
         csv_file = os.path.join(path,ls[model_name][lastid])
         df = handle_csv_input(csv_file, "Native", True)
         if len(df) > itercount:
+            print(f'{lastid} => 2', end=' ')
             status[lastid]= {'status': 2}
+            lastid-=1
             continue
-        print(df.columns)
+        #print(df.columns)
         ### RETIRAR COLUMNA EXTRA ::
-        print("Se retira la primera columna (en caso de que no se haya mostrado una columna de índices, se debe evitar este proceso)")
+        #print("Se retira la primera columna (en caso de que no se haya mostrado una columna de índices, se debe evitar este proceso)")
         df=df.iloc[:,1:]
         ### RETIRAR COLUMNA EXTRA :;
         df_dict = df.to_dict('records')
+        print(f'{lastid} => 1', end=' ')
         status[lastid]={
             "path"            : os.path.join(path, ls[model_name][lastid]),
             "record"          : lastid,
@@ -525,7 +529,7 @@ def save_solutions(
     )
 
 def _worker(_params):
-    df, model_instance, model_name, out_dir, output, _batch = _params
+    df, model_instance, model_name, out_dir, output, _start_row, _end_row, iterations, status = _params
     perform_search_fixed_s_tau(
             df            ,
             model_instance,
@@ -533,11 +537,12 @@ def _worker(_params):
             out_dir       ,
             ["s", "tau"]  ,
             output        ,
-            start_row       = _batch["start_row"],
-            end_row         = _batch["end_row"],
-            start_iter      = _batch["start_iter"],
-            end_iter        = _batch["end_iter"],
-            found_solutions = _batch['found_solutions']
+            start_row       = _start_row,
+            end_row         = _end_row,
+#            start_iter      = 
+            end_iter        = iterations,
+#            found_solutions = _batch['found_solutions']
+            status          = status,
         )
 
 
@@ -565,27 +570,37 @@ def run_model(
             out_dir = handle_output(model_instance, model_name, out_dir, destination)
         #### If there's any start iteration, it means is from a given csv. So, reading it.
         if recover:
-            status = last_instance_status(out_dir, model_name)
-            print(f"Recovering from {status['path']}")
-            print(f"Instance {status['record']}, Iteration {status['iteration']}")
-            print(f'Found solutions: {status["found_solutions"]}')
+            status = last_instance_status(out_dir, model_name, itercount=iterations)
+            print(f"Recovering from {status[max(status.keys())]['path']}")
+            print(f"Instance {status[max(status.keys())]['record']}, Iteration {status[max(status.keys())]['iteration']}")
+            #print(f'Found solutions: {status[max(status.keys())]["found_solutions"]}')
             #return
             if parallel:
                 if pbatch_size < 1:
                     print(f"Error: pbatch_size:{pbatch_size} no especificado o erróneo.")
                     return
-                pbatch=[ a for a,v in status.items() if v.get('status') == 1 ]
-                pbatch_s=len(pbatch)
-                if pbatch_s == 0: return
+                pbatch=sorted([ a for a,v in status.items() if v.get('status') == 1 ])
+                cbatch=sorted([ a for a,v in status.items() if v.get('status') == 2 ])
+                if pbatch:
+                    _start_row =pbatch[     0     ::pbatch_size]
+                    _end_row   =pbatch[pbatch_size::pbatch_size]+[pbatch[-1]+1]
+                    orphan_rows=range(pbatch[-1]+pbatch_size,len(df), pbatch_size)
+                    _start_row+=[ s                          for s in orphan_rows ]
+                    _end_row  +=[ min(e+pbatch_size, len(df)) for e in orphan_rows ]
+                elif not cbatch:
+                    _start_row=range(0,len(df), pbatch_size)
+                    _end_row   =[ min(e+pbatch_size,len(df)) for e in _start_row ]
+                elif cbatch:
+                    _start_row=range(max(cbatch)+1,len(df), pbatch_size)
+                    _end_row   =[ min(e+pbatch_size,len(df)) for e in _start_row ]
+                print(_start_row)
+                print(_end_row)
                 _njobs=math.ceil(os.cpu_count()/2)
-                tasks=[]
-                for i in range(0, len(pbatch), pbatch_size):
-                    _start_row=pbatch[i]
-                    endid=min(i+pbatch_size,pbatch_s-1)
-                    _end_row  =pbatch[endid] if endid < pbatch_s-1 else pbatch[endid]+1
-                    tasks.append(
-                        (df,model_instance,model_name, out_dir, output, _start_row, _end_row, status)
-                    )
+                print(f'cpu_process_batch_size: {_njobs}')
+                tasks=[
+                    (df,model_instance,model_name, out_dir, output, s, e, iterations, status)
+                    for s,e in zip(_start_row,_end_row)
+                ]
                 with multiprocessing. Pool(processes=_njobs) as pool:
                     _pout=pool.map(_worker, tasks)
             else:
